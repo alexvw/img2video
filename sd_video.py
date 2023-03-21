@@ -1,4 +1,3 @@
-
 import os
 import json
 from typing import Any
@@ -18,10 +17,7 @@ from diffusion import GaussianDiffusion, beta_schedule
 
 from PIL import Image
 import torchvision.utils as vutils
-
-from PIL import Image
 import torchvision.transforms.functional as TF
-
 class SDVideo:
     def __init__(self, model_path: str, device: str | torch.device = torch.device('cpu')):
         print("Initializing...")
@@ -117,21 +113,35 @@ class SDVideo:
         return tensor2vid(x)
     
     #needs to return tensor of size (1, 4, 16, 32, 32)
-    def preprocess_image(image_path: str, size: tuple[int, int]) -> torch.Tensor:
-        image = Image.open(image_path).convert("RGB")
-        image = TF.resize(image, size)
-        image = TF.to_tensor(image)
+    def preprocess_image(self, image_path, output_size, device):
+        image = Image.open(image_path).convert('RGB')
+        image = image.resize(output_size)
+        image = TF.to_tensor(image).unsqueeze(0)
         
-        # Prepare final tensor of shape (1, 4, 16, 32, 32) with zeros
-        final_tensor = torch.zeros((1, 4, 16, 32, 32))
-
-        # Fill the first 3 channels with RGB values from the resized image
-        for i in range(3):
-            for j in range(16):
-                final_tensor[0, i, j] = image
-
+        latent_w, latent_h = output_size
+        final_tensor = torch.zeros((1, 4, 16, latent_w, latent_h), device=device)
+        
+        for i in range(3):  # RGB channels
+            for j in range(16):  # 16 frames
+                final_tensor[0, :3, j, :, :] = image.unsqueeze(0)
+        
         return final_tensor
-
+    
+    def pil_img_to_torch(self, pil_img, half=False):
+        image = np.array(pil_img).astype(np.float32) / 255.0
+        image = rearrange(torch.from_numpy(image), 'h w c -> c h w')
+        if half:
+            image = image.half()
+        return (2.0 * image - 1.0).unsqueeze(0)
+    
+    def save_noise(self, input_noise_tensor: torch.Tensor):
+        # Save preview image for each channel
+        preview_dir = os.getcwd()
+        for i in range(4):
+            for j in range(self.max_frames):
+                channel_preview_path = os.path.join(preview_dir, f'noise/preview_channel_{i}_frame_{j}.png')
+                channel_data = input_noise_tensor[0, i, j, ...].squeeze()
+                vutils.save_image(channel_data, channel_preview_path, normalize=True)
 
     def process(self, text_emb: torch.Tensor, text_emb_neg: torch.Tensor, image_path: str = None) -> torch.Tensor:
         context = torch.cat([text_emb_neg, text_emb], dim=0).to(self.device)
@@ -141,20 +151,17 @@ class SDVideo:
             latent_h, latent_w = 32, 32
 
             # Load and preprocess the image
-            #image_tensor = self.preprocess_image(image_path, (latent_w, latent_h))
-            image_tensor = torch.randn(num_sample, 4, self.max_frames, latent_h, latent_w).to(self.device)
-
-            # Save preview image for each channel
-            preview_dir = os.getcwd()
-            for i in range(4):
-                for j in range(self.max_frames):
-                    channel_preview_path = os.path.join(preview_dir, f'preview_channel_{i}_frame_{j}.png')
-                    channel_data = image_tensor[0, i, j, ...].squeeze()
-                    vutils.save_image(channel_data, channel_preview_path, normalize=True)
-
+            input_noise_tensor = torch.randn(num_sample, 4, self.max_frames, latent_h, latent_w).to(self.device)
+            print("Noise size: "+str(input_noise_tensor.size()))
+            input_noise_tensor = self.preprocess_image(image_path, (latent_w, latent_h), self.device)
+            print("Image size: "+str(input_noise_tensor.size()))
+          
+            # Save noise preview
+            self.save_noise(input_noise_tensor)
+            
             with torch.autocast(self.device.type, enabled=True):
                 x0 = self.diffusion.ddim_sample_loop(
-                    noise=image_tensor,
+                    noise=input_noise_tensor,
                     model=self.unet,
                     model_kwargs=[{
                         'y': context[1].unsqueeze(0).repeat(num_sample, 1, 1)
