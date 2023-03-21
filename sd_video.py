@@ -112,7 +112,7 @@ class SDVideo:
     def postprocess(self, x: torch.Tensor) -> dict[str, list[np.ndarray]]:
         return tensor2vid(x)
     
-    #needs to return tensor of size (1, 4, 16, 32, 32)
+    #needs to return tensor of shape (1, 4, 16, 32, 32)
     def preprocess_image(self, image_path, output_size, device):
         image = Image.open(image_path).convert('RGB')
         image = image.resize(output_size)
@@ -124,7 +124,7 @@ class SDVideo:
         for i in range(3):  # RGB channels
             for j in range(16):  # 16 frames
                 final_tensor[0, :3, j, :, :] = image.unsqueeze(0)
-        
+
         return final_tensor
     
     def pil_img_to_torch(self, pil_img, half=False):
@@ -150,18 +150,47 @@ class SDVideo:
             num_sample = 1  # here let b = 1
             latent_h, latent_w = 32, 32
 
-            # Load and preprocess the image
+            # Create noise tensor shape (1, 4, 16, 32, 32)
             input_noise_tensor = torch.randn(num_sample, 4, self.max_frames, latent_h, latent_w).to(self.device)
-            print("Noise size: "+str(input_noise_tensor.size()))
-            input_noise_tensor = self.preprocess_image(image_path, (latent_w, latent_h), self.device)
-            print("Image size: "+str(input_noise_tensor.size()))
-          
+        
+            # Load and preprocess the image
+            image_tensor = self.preprocess_image(image_path, (latent_w, latent_h), self.device)
+            print("Image size: "+str(image_tensor.size()))
+
+            # Calculate mean and std for the image tensor
+            image_mean = image_tensor.mean(dim=[0, 2, 3, 4], keepdim=True)
+            image_std = image_tensor.std(dim=[0, 2, 3, 4], keepdim=True)
+
+            # Normalize the image tensor
+            normalized_image_tensor = (image_tensor - image_mean) / image_std
+
+            # Create a new tensor with the same shape as input_noise_tensor
+            combined_tensor = input_noise_tensor.clone()
+
+            # Update the combined tensor with image data for the first three channels (RGB) for all frames
+            combined_tensor[:, :3, :, :, :] = normalized_image_tensor[:, :3, :, :, :]
+
+            # Add noise to the first three channels of the combined tensor
+            noise_scale = 0.6
+            noise_tensor = torch.randn_like(combined_tensor)
+
+            # Blend noise tensor and image tensor using a blending factor (alpha)
+            alpha = 0.5  # Blending factor (0 <= alpha <= 1)
+            blended_tensor = alpha * combined_tensor + (1 - alpha) * noise_tensor
+
+            # Print pixel values for noise tensor and image tensor
+            self.print_pixel_values(input_noise_tensor, "Noise Tensor")
+            self.print_pixel_values(image_tensor, "Image Tensor")
+            self.print_pixel_values(normalized_image_tensor, "normalized_image_tensor")
+            self.print_pixel_values(combined_tensor, "combined_tensor")
+            self.print_pixel_values(blended_tensor, "blended_tensor")
+
             # Save noise preview
-            self.save_noise(input_noise_tensor)
-            
+            self.save_noise(blended_tensor)
+
             with torch.autocast(self.device.type, enabled=True):
                 x0 = self.diffusion.ddim_sample_loop(
-                    noise=input_noise_tensor,
+                    noise=blended_tensor,
                     model=self.unet,
                     model_kwargs=[{
                         'y': context[1].unsqueeze(0).repeat(num_sample, 1, 1)
@@ -183,6 +212,12 @@ class SDVideo:
                     video_data, '(b f) c h w -> b c f h w', b=bs_vd)
         return video_data
     
+    def print_pixel_values(self, tensor: torch.Tensor, tensor_name: str, num_channels: int = 4, frame_idx: int = 0):
+        print(f"Pixel values for {tensor_name}:")
+        for ch in range(num_channels):
+            print(f"Channel {ch}, Frame {frame_idx}:")
+            print(tensor[0, ch, frame_idx, :, :])
+
 
 # Generate random noise tensor
 #noise = torch.randn(num_sample, 4, self.max_frames, latent_h, latent_w).to(self.device)
