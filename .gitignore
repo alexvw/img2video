@@ -1,0 +1,7 @@
+first_tries
+/model/open_clip_pytorch_model.bin
+/model/text2video_pytorch_model.pth
+/model/VQGAN_autoencoder.pth
+/model/.gitattributes
+/model/configuration.json
+/noise
