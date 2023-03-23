@@ -112,22 +112,35 @@ class SDVideo:
     def postprocess(self, x: torch.Tensor) -> dict[str, list[np.ndarray]]:
         return tensor2vid(x)
     
-    #needs to return tensor of shape (1, 4, self.max_frames, latent_w, latent_h)
-    def preprocess_image(self, image_path, output_size, device):
+    def preprocess_image_RGB(self, image_path, output_size, device):
         image = Image.open(image_path).convert('RGB')
         image = image.resize(output_size)
         image = TF.to_tensor(image).unsqueeze(0)
-        
-        #ability to swap channels
-        #TODO: no matter what order the channels, the green is always red
-        image = image[:, [0,1,2], :, :]
+
+        # Create a random noise channel tensor
+        noise_channel = torch.rand_like(image[:, :1, :, :])
+
+        # Concatenate the random noise channel to the original image tensor
+        image = torch.cat((image, noise_channel), dim=1)
 
         latent_w, latent_h = output_size
         final_tensor = torch.zeros((1, 4, self.max_frames, latent_w, latent_h), device=device)
-        
-        for i in range(3):  # RGB channels
-            for j in range(self.max_frames):  # self.max_frames frames
-                final_tensor[0, :3, j, :, :] = image.unsqueeze(0)
+
+        for j in range(self.max_frames):  # self.max_frames frames
+            final_tensor[0, :, j, :, :] = image
+
+        return final_tensor
+    
+    def preprocess_image_CMYK(self, image_path, output_size, device):
+        image = Image.open(image_path).convert('CMYK')
+        image = image.resize(output_size)
+        image = TF.to_tensor(image).unsqueeze(0)
+
+        latent_w, latent_h = output_size
+        final_tensor = torch.zeros((1, 4, self.max_frames, latent_w, latent_h), device=device)
+
+        for j in range(self.max_frames):  # self.max_frames frames
+            final_tensor[0, :, j, :, :] = image
 
         return final_tensor
     
@@ -139,6 +152,14 @@ class SDVideo:
         return (2.0 * image - 1.0).unsqueeze(0)
     
     def save_noise(self, input_noise_tensor: torch.Tensor):
+        # Save preview image for each frame
+        preview_dir = os.getcwd()
+        for j in range(self.max_frames):
+            frame_preview_path = os.path.join(preview_dir, f'noise/preview_frame_{j}.png')
+            frame_data = input_noise_tensor[0, :3, j, ...].squeeze()  # Get the first 3 channels (RGB)
+            vutils.save_image(frame_data, frame_preview_path, normalize=True)
+
+    def save_noise_channels(self, input_noise_tensor: torch.Tensor):
         # Save preview image for each channel
         preview_dir = os.getcwd()
         for i in range(4):
@@ -158,9 +179,9 @@ class SDVideo:
             input_noise_tensor = torch.randn(num_sample, 4, self.max_frames, latent_h, latent_w).to(self.device)
 
             # Load and preprocess the image
-            image_tensor = self.preprocess_image(image_path, (latent_w, latent_h), self.device)
+            image_tensor = self.preprocess_image_RGB(image_path, (latent_w, latent_h), self.device)
             print("image tensor size: "+str(image_tensor.size()))
-            print("Processing video frames")
+            print("Processing video "+str(self.max_frames)+" frames...")
 
             # Calculate mean and std for the image tensor
             image_mean = image_tensor.mean(dim=[0, 2, 3, 4], keepdim=True)
@@ -173,14 +194,14 @@ class SDVideo:
             combined_tensor = input_noise_tensor.clone()
 
             # Update the combined tensor with image data for the first three channels (RGB) for all frames
-            combined_tensor[:, :3, :, :, :] = normalized_image_tensor[:, :3, :, :, :]
+            combined_tensor[:, :4, :, :, :] = normalized_image_tensor[:, :4, :, :, :]
 
             # Add noise to the first three channels of the combined tensor
             noise_tensor = torch.randn_like(combined_tensor)
 
             # Blend noise tensor and image tensor using a blending factor (alpha) that changes per frame
-            initial_alpha = 0.3  # Initial blending factor (0 <= alpha <= 1)
-            ratio = 0.7  # Define the ratio to reduce alpha per frame
+            initial_alpha = initial_alpha  # Initial blending factor (0 <= alpha <= 1)
+            ratio = ratio  # Define the ratio to reduce alpha per frame
             alphas = [initial_alpha * (ratio ** i) for i in range(self.max_frames)]
 
             # Create the blended tensor
@@ -203,7 +224,7 @@ class SDVideo:
             #self.print_pixel_values(normalized_blended_tensor, "blended_tensor")
 
             # Save noise preview
-            #self.save_noise(normalized_blended_tensor)
+            self.save_noise(normalized_blended_tensor)
 
             with torch.autocast(self.device.type, enabled=True):
                 x0 = self.diffusion.ddim_sample_loop(
@@ -264,7 +285,7 @@ def save_vid(images: torch.Tensor, path: str) -> None:
         Image.fromarray(x).save(os.path.join(path, str(i).zfill(4) + '.png'))
 
 def save_webm(images: torch.Tensor, dir_path: str, file_name: str, fps: int = 24) -> None:
-    print("Saving video as a WebM file")
+    print("Saving video as "+file_name)
     images = images.mul(255).round().clamp(0, 255).to(dtype=torch.uint8, device='cpu').numpy()
     frames = [Image.fromarray(x) for x in images]
 
