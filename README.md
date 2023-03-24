@@ -1,13 +1,5 @@
-## This project allows you to not just generate random images from prompts, but to turn your existing images into videos + prompts of what the image should be doing in that video.
-
-
-This project is a fork off the chinese text-to-video model from damo/text-to-video-synthesis and lopho/sd-video to add the important ability to not just generate a random video that matches the text prompt, but generate a video that matches the prompt but also has the zero-shot initialization point of a known image.
-
-This is hugely important for video creation because if you want your video to be coherent, the objects and characters need to be consistent. Theoretically, this pattern (image+prompt2video) will allow you to create images, and turn those images into videos. 
-
-As a disclaimer, I have very little experience with python, pytorch, and general nn so this is a naive approach. But as far as I can tell, this is the first attempt to combine the img2img noisey seeding concept with the new text2video models. 
-
-# 
+TODO: allow no-prompt image-content-detection and video creation
+TODO: chain prompts, and each video starts with last frame from previous video
 
 
 # If you are looking for a guide for how to run all of this:
