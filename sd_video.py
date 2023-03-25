@@ -28,7 +28,6 @@ class SDVideo:
         cfg = self.config['model']['model_cfg']
         cfg['temporal_attention'] = True if cfg[
             'temporal_attention'] == 'True' else False
-        self.max_frames = self.config['model']['model_args']['max_frames']
 
         self.unet: UNetSD = UNetSD(
                 in_dim = cfg['unet_in_dim'],
@@ -68,7 +67,7 @@ class SDVideo:
         ddconfig = {
                 'double_z': True,
                 'z_channels': 4,
-                'resolution': 256,
+                'resolution': 384,
                 'in_channels': 3,
                 'out_ch': 3,
                 'ch': 128,
@@ -92,17 +91,19 @@ class SDVideo:
         self.text_encoder = self.text_encoder.eval().requires_grad_(False)
         self.text_encoder.to(self.device)
 
-    def __call__(self, text: str, text_neg: str = '', initial_alpha: float = 0.23, ratio: float = 0.8, image_path: str = "input.png") -> list[list[np.ndarray]]:
+    def __call__(self, text: str, text_neg: str = '', max_frames: int = 16, initial_alpha: float = 0.23, ratio: float = 0.8, image_path: str = "input.png", output_file_path: str = "output.webm", fps: int = 24) -> str:
         #print("Preprocessing...")
         text_emb, text_emb_neg = self.preprocess(text, text_neg)
         
-        #print("Processing...")
-        y = self.process(text_emb, text_emb_neg, image_path, initial_alpha, ratio)
+        print("Processing: "+text)
+        y = self.process(text_emb, text_emb_neg, image_path, initial_alpha, ratio, max_frames)
         
         #print("Postprocessing...")
         out = self.postprocess(y)
+
+        self.save_webm(out, output_file_path, fps)
         
-        return out
+        return "complete"
 
     def preprocess(self, text: str, text_neg: str = '') -> tuple[torch.Tensor, torch.Tensor]:
         text_emb = self.text_encoder(tqdm([text], desc="Encoding text", ncols=100))
@@ -113,7 +114,7 @@ class SDVideo:
         return tensor2vid(x)
     
     #needs to return tensor of shape (1, 4, self.max_frames, latent_w, latent_h)
-    def preprocess_image_RGB(self, image_path, output_size, device):
+    def preprocess_image_RGB(self, image_path, output_size, device, max_frames: int = 16):
         image = Image.open(image_path).convert('RGB')
         image = image.resize(output_size)
         image = TF.to_tensor(image).unsqueeze(0)
@@ -122,14 +123,14 @@ class SDVideo:
         image = image[:, [0,1,2], :, :]
 
         latent_w, latent_h = output_size
-        final_tensor = torch.zeros((1, 4, self.max_frames, latent_w, latent_h), device=device)
+        final_tensor = torch.zeros((1, 4, max_frames, latent_w, latent_h), device=device)
         
-        for j in range(self.max_frames):  # self.max_frames frames
+        for j in range(max_frames):  # self.max_frames frames
             final_tensor[0, :3, j, :, :] = image
 
         return final_tensor
     
-    def process(self, text_emb: torch.Tensor, text_emb_neg: torch.Tensor, image_path: str = None, initial_alpha: float = 0.23, ratio: float = 0.8) -> torch.Tensor:
+    def process(self, text_emb: torch.Tensor, text_emb_neg: torch.Tensor, image_path: str = None, initial_alpha: float = 0.23, ratio: float = 0.8, max_frames: int = 16) -> torch.Tensor:
         context = torch.cat([text_emb_neg, text_emb], dim=0).to(self.device)
         # synthesis
         with torch.no_grad():
@@ -137,12 +138,12 @@ class SDVideo:
             latent_h, latent_w = 32, 32
 
             # Create noise tensor shape (1, 4, self.max_frames, latent_h, latent_w)
-            input_noise_tensor = torch.randn(num_sample, 4, self.max_frames, latent_h, latent_w).to(self.device)
+            input_noise_tensor = torch.randn(num_sample, 4, max_frames, latent_h, latent_w).to(self.device)
 
             # Load and preprocess the image
-            image_tensor = self.preprocess_image_RGB(image_path, (latent_w, latent_h), self.device)
+            image_tensor = self.preprocess_image_RGB(image_path, (latent_w, latent_h), self.device, max_frames)
             print("Image weight "+str(initial_alpha)+"x"+str(ratio)+" Tensor size: "+str(image_tensor.size()))
-            print("Processing video "+str(self.max_frames)+" frames...")
+            print("Processing video "+str(max_frames)+" frames...")
 
             ## Calculate mean and std for the image tensor
             image_mean = image_tensor.mean(dim=[0, 2, 3], keepdim=True)
@@ -163,10 +164,10 @@ class SDVideo:
             # Blend noise tensor and image tensor using a blending factor (alpha) that changes per frame
             initial_alpha = initial_alpha  # Initial blending factor (0 <= alpha <= 1)
             ratio = ratio  # Define the ratio to reduce alpha per frame
-            alphas = [initial_alpha * (ratio ** i) for i in range(self.max_frames)]
+            alphas = [initial_alpha * (ratio ** i) for i in range(max_frames)]
             # Create the blended tensor
             blended_tensors = []
-            for i in range(self.max_frames):
+            for i in range(max_frames):
                 alpha = alphas[i]
                 blended_frame = alpha * combined_tensor[:, :, i, :, :] + (1 - alpha) * noise_tensor[:, :, i, :, :]
                 blended_tensors.append(blended_frame.unsqueeze(2))
@@ -179,7 +180,7 @@ class SDVideo:
             normalized_blended_tensor = (blended_tensor - blended_mean) / blended_std
             
             # Save noise preview
-            self.save_noise(normalized_blended_tensor)
+            self.save_noise(normalized_blended_tensor, max_frames)
 
             with torch.autocast(self.device.type, enabled=True):
                 x0 = self.diffusion.ddim_sample_loop(
@@ -212,10 +213,10 @@ class SDVideo:
             image = image.half()
         return (2.0 * image - 1.0).unsqueeze(0)
     
-    def save_noise(self, input_noise_tensor: torch.Tensor):
+    def save_noise(self, input_noise_tensor: torch.Tensor, max_frames: int = 16):
         # Save preview image for each frame
         preview_dir = os.getcwd()
-        for j in range(self.max_frames):
+        for j in range(max_frames):
             frame_preview_path = os.path.join(preview_dir, f'noise/preview_frame_{j}.png')
             frame_data = input_noise_tensor[0, :3, j, ...].squeeze()  # Get the first 3 channels (RGB)
             vutils.save_image(frame_data, frame_preview_path, normalize=True)
@@ -224,7 +225,53 @@ class SDVideo:
         print(f"Pixel values for {tensor_name}:")
         for ch in range(num_channels):
             print(f"Channel {ch}, Frame {frame_idx}:")
-            print(tensor[0, ch, frame_idx, :, :])               
+            print(tensor[0, ch, frame_idx, :, :])
+
+    def save_webm(self, images: torch.Tensor, file_path: str, fps: int = 24) -> None:
+        print("Saving video as "+file_path)
+        images = images.mul(255).round().clamp(0, 255).to(dtype=torch.uint8, device='cpu').numpy()
+        frames = [Image.fromarray(x) for x in images]
+
+        # Save the video as a WebM file
+        with imageio.get_writer(file_path, format='WEBM', mode='I', fps=fps, codec='vp9') as writer:
+            for frame in frames:
+                # Convert the PIL.Image object to a NumPy array
+                frame_array = np.array(frame)
+                writer.append_data(frame_array)
+
+    def process_multiline_prompt(self, multiline_prompt: str, image_path: str, max_frames: int = 16, initial_alpha: float = 0.23, ratio: float = 0.8, output_file_path: str = "output.webm", fps: int = 16) -> str:
+        # Split the multiline_prompt into individual lines
+        prompts = multiline_prompt.split("\n")
+
+        # Initialize a list to store the frames of all videos
+        all_frames = []
+
+        # Iterate through each prompt
+        for prompt in prompts:
+            # Generate a video for the current prompt
+            self.__call__(prompt, max_frames=max_frames, initial_alpha=initial_alpha, ratio=ratio, image_path=image_path, output_file_path=output_file_path, fps=fps)
+
+            # Load the generated video
+            video_frames = imageio.mimread(output_file_path)
+
+            # Append the frames of the current video to the all_frames list
+            all_frames.extend(video_frames)
+
+            # Update the image_path for the next prompt to use the last frame of the current video
+            last_frame = Image.fromarray(video_frames[-1])
+            last_frame.save("temp_last_frame.png")
+            image_path = "temp_last_frame.png"
+
+        # Save the concatenated video
+        with imageio.get_writer(output_file_path, format='WEBM', mode='I', fps=fps, codec='vp9') as writer:
+            for frame in all_frames:
+                writer.append_data(frame)
+
+        # Remove the temporary last frame image
+        if os.path.exists("temp_last_frame.png"):
+            os.remove("temp_last_frame.png")
+
+        return "complete"
 
 def tensor2vid(
         video: torch.Tensor,

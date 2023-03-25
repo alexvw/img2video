@@ -64,3 +64,4 @@ class FrozenOpenCLIPEmbedder(torch.nn.Module):
     def encode(self, text):
         return self(text)
 
+
