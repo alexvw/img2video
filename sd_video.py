@@ -67,7 +67,7 @@ class SDVideo:
         ddconfig = {
                 'double_z': True,
                 'z_channels': 4,
-                'resolution': 384,
+                'resolution': 256,
                 'in_channels': 3,
                 'out_ch': 3,
                 'ch': 128,

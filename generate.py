@@ -16,10 +16,6 @@ model = SDVideo(model_path, device)
 
 multiline_prompt = """darth maul appears and shows his red lightsaber, desert, tatooine
 darth maul jump attack, desert, jump attack
-luke skywalker battle lightsaber, darth maul fight, desert, tatooine
-darth maul lightsaber red attack
-darth maul wins, walks away, skywalker dies, red lightsaber kill, blue lightsaber death, desert
 star wars spaceship, imperial spaceship flies away
-darth star wars spaceship, in the atmosphere, flying in space, stars
-star wars spaceship, flies away, warp speed"""
-model.process_multiline_prompt(multiline_prompt, image_path="input.png", max_frames=36, initial_alpha=0.23, ratio=0.8, output_file_path="output/starwars-space.webm", fps=8)
+star wars spaceship, flies away, space, stars, warp speed"""
+model.process_multiline_prompt(multiline_prompt, image_path="input.png", max_frames=10, initial_alpha=0.23, ratio=0.8, output_file_path="output/starwars-space.webm", fps=8)
