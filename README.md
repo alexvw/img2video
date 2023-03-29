@@ -1,5 +1,14 @@
+This simple fork uses the recent modelscope text 2 video model to generate somewhat coherent video stories based on text inputs. The output is interesting and I think this pattern will be eventually similar to how we generate better videos, but that will require an improved model. Current limitations:
+
+- noise latent dimensions limited to 32x32: means that the weight of the input image/last frame is limited to colors, color borders, general shapes. Its just a suggestion
+
+- model output: videos output from model are videos (This is amazing! so soon!) but theyre jumpy, low-res, and a few generations behind image models. Its an impressive start but it's not going to be replacing real video yet.
+
+
 ### Usage:
 ```
+model_path = 'model' #where to find the damo/text-to-video-synthesis model
+device = 'cuda' #cuda, cpu not tested
 model = SDVideo(model_path, device)
 
 multiline_prompt = """darth maul appears and shows his red lightsaber, desert, tatooine
