@@ -1,4 +1,10 @@
-This simple fork uses the recent modelscope text 2 video model to generate somewhat coherent video stories based on text inputs. The output is interesting and I think this pattern will be eventually similar to how we generate better videos, but that will require an improved model. Current limitations:
+# Summary: 
+### This simple fork uses the recent modelscope text 2 video model to generate somewhat coherent video stories based on text inputs. The output is interesting and I think this pattern will be eventually similar to how we generate better videos, but that will require an improved model. Current limitations:
+
+## Does it work? No, not super well. The concept of seeding the noise in the latent before handing it to the model like img2img works, but it doesn't influence the later frames. So you get weird smooth transitions but nonsense cohesion, more hallucination than useful tool like I hoped.
+
+
+
 
 - noise latent dimensions limited to 32x32: means that the weight of the input image/last frame is limited to colors, color borders, general shapes. Its just a suggestion
 
